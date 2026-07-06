@@ -1,8 +1,8 @@
 # name: test/sql/read_zarr_v2.test
 # description: Zarr v2 stores and replacement scan
-# group: [duckdb_zarr]
+# group: [zarr]
 
-require duckdb_zarr
+require zarr
 
 # ── float_baseline_v2 ────────────────────────────────────────────────────────
 # Same data as float_baseline but written as Zarr v2 (.zarray/.zattrs/.zgroup).

@@ -70,5 +70,5 @@ duckdb -unsigned
 ```
 
 ```sql
-LOAD './build/debug/extension/duckdb_zarr/duckdb_zarr.duckdb_extension';
+LOAD './build/debug/extension/zarr/zarr.duckdb_extension';
 ```

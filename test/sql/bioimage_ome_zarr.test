@@ -1,10 +1,10 @@
 # name: test/sql/bioimage_ome_zarr.test
 # description: xarray-style SQL queries over an OME-Zarr bioimage
-# group: [duckdb_zarr]
+# group: [zarr]
 
-require duckdb_zarr
+require zarr
 
-load duckdb_zarr
+load zarr
 
 # The fixture is written by xarray with named c/y/x dimensions and OME-Zarr
 # multiscales metadata. The array is named "0", following the conventional

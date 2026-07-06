@@ -9,4 +9,4 @@ include!("lib.rs");
 // example, do not change the content of the file.
 //
 // To build the Wasm target explicitly, use:
-//   cargo build --example duckdb_zarr
+//   cargo build --example zarr

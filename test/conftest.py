@@ -3,7 +3,7 @@ Shared pytest fixtures for duckdb-zarr integration tests.
 
 The --extension flag is required for any test that loads the extension:
 
-    pytest test/ --extension build/debug/duckdb_zarr.duckdb_extension
+    pytest test/ --extension build/debug/zarr.duckdb_extension
 """
 import pathlib
 import socket
@@ -21,7 +21,7 @@ def pytest_addoption(parser):
         "--extension",
         required=False,
         default=None,
-        help="Path to duckdb_zarr.duckdb_extension binary",
+        help="Path to zarr.duckdb_extension binary",
     )
 
 

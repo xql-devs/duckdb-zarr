@@ -39,7 +39,7 @@ This project is related to [xarray-sql](https://github.com/alxmrs/xarray-sql) an
 
 ```sql
 -- Load the extension
-LOAD 'duckdb_zarr';
+LOAD 'zarr';
 
 -- Read metadata from a Zarr array
 SELECT * FROM read_zarr_metadata('/path/to/my/array.zarr');

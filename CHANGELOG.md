@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- Rename the crate/extension from `duckdb_zarr` to `zarr` throughout (Cargo package name, `Makefile` `EXTENSION_NAME`, `MainDistributionPipeline.yml`, tests, docs). The prior partial rename only updated `description.yml` and added a `zarr_init_c_api` alias; native community builds still produced and looked for `duckdb_zarr` artifacts because the Rust crate name (and thus the compiled library filename) didn't match, and the `Makefile`'s plain `EXTENSION_NAME=duckdb_zarr` assignment overrode the `EXTENSION_NAME` env var the CI distribution workflow passes in.
 - CI: align DuckDB to v1.5.4 across all three version sites — crate `=1.10504.0`, workflow `duckdb_version`, and `Makefile` `TARGET_DUCKDB_VERSION` (the last stamps the extension metadata `duckdb_version`; with `USE_UNSTABLE_C_API=1` the loader requires an *exact* match) — so the built extension loads in the `duckdb_sqllogictest` test runner, which had moved to 1.5.4. Fixes macOS-arm64/Windows test-load version-mismatch failures. Wrapped now-`unsafe` `FlatVector::as_mut_ptr` calls per the 1.10504.0 API.
 - CI: make `generate_fixtures.py` resilient to transient xarray-tutorial downloads — skip the network when a fixture is already cached, and retry 5xx with exponential backoff (a GitHub-raw 500 on `ersstv5` was failing the build).
 

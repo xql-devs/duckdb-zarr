@@ -7,7 +7,7 @@ mod read_zarr_metadata;
 mod replacement_scan;
 mod zarr_reader;
 
-unsafe fn duckdb_zarr_init_c_api_internal(
+unsafe fn zarr_init_c_api_internal(
     info: duckdb::ffi::duckdb_extension_info,
     access: *const duckdb::ffi::duckdb_extension_access,
 ) -> Result<bool, Box<dyn Error>> {
@@ -37,12 +37,12 @@ unsafe fn duckdb_zarr_init_c_api_internal(
 /// # Safety
 /// Entrypoint called by DuckDB.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn duckdb_zarr_init_c_api(
+pub unsafe extern "C" fn zarr_init_c_api(
     info: duckdb::ffi::duckdb_extension_info,
     access: *const duckdb::ffi::duckdb_extension_access,
 ) -> bool {
     unsafe {
-        match duckdb_zarr_init_c_api_internal(info, access) {
+        match zarr_init_c_api_internal(info, access) {
             Ok(v) => v,
             Err(e) => {
                 if let Some(set_error) = (*access).set_error {
@@ -54,14 +54,4 @@ pub unsafe extern "C" fn duckdb_zarr_init_c_api(
             }
         }
     }
-}
-
-/// # Safety
-/// Entrypoint called by DuckDB for the community extension name.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn zarr_init_c_api(
-    info: duckdb::ffi::duckdb_extension_info,
-    access: *const duckdb::ffi::duckdb_extension_access,
-) -> bool {
-    unsafe { duckdb_zarr_init_c_api(info, access) }
 }

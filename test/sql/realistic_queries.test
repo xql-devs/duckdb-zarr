@@ -1,8 +1,8 @@
 # name: test/sql/realistic_queries.test
 # description: Realistic end-to-end SQL queries mirroring xarray-sql test patterns
-# group: [duckdb_zarr]
+# group: [zarr]
 
-require duckdb_zarr
+require zarr
 
 # ── 1. Basic sanity / SELECT ─────────────────────────────────────────────────
 # Mirror: test_sanity, test_basic_select_all

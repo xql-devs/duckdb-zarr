@@ -1,5 +1,5 @@
 [package]
-name = "duckdb_zarr"
+name = "zarr"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,15 +15,8 @@ strip = true
 # src/wasm_lib.rs forwards to src/lib.rs so that we can change from cdylib
 # (that is needed while compiling natively) to staticlib (needed since the
 # actual linking will be done via emcc
-name = "duckdb_zarr"
-path = "src/wasm_lib.rs"
-crate-type = ["staticlib"]
-
-[[example]]
-# Community extension builds use extension.name from description.yml as
-# EXTENSION_NAME, so provide the same staticlib example under the published name.
 name = "zarr"
-path = "src/wasm_lib_zarr.rs"
+path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]

@@ -1,8 +1,8 @@
 # name: test/sql/read_zarr.test
 # description: read_zarr table function — Phase 1 coverage
-# group: [duckdb_zarr]
+# group: [zarr]
 
-require duckdb_zarr
+require zarr
 
 # ── float_baseline ─────────────────────────────────────────────────────────────
 # Plain float32 data variable, dim coords (time int64, lat float64, lon float64).

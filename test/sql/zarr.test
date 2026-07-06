@@ -1,0 +1,5 @@
+# name: test/sql/zarr.test
+# description: smoke test that the zarr extension loads
+# group: [zarr]
+
+require zarr
