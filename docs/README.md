@@ -41,15 +41,16 @@ This project is related to [xarray-sql](https://github.com/alxmrs/xarray-sql) an
 -- Load the extension
 LOAD 'zarr';
 
--- Read metadata from a Zarr array
-SELECT * FROM read_zarr_metadata('/path/to/my/array.zarr');
+-- Read metadata from a Zarr store (a local path or a URL)
+SELECT * FROM read_zarr_metadata('test/fixtures/xarray_tutorial/float_baseline.zarr');
 
--- Read array data as a table
-SELECT * FROM read_zarr('/path/to/my/array.zarr');
+-- Read a store as a table
+SELECT * FROM read_zarr('test/fixtures/xarray_tutorial/float_baseline.zarr');
 
--- Query specific dimensions or filter data
-SELECT * FROM read_zarr('/path/to/my/array.zarr') 
-WHERE dimension_0 > 100 AND dimension_1 < 50;
+-- Filter with plain SQL on the coordinate columns
+SELECT time, lat, lon, temperature
+FROM read_zarr('test/fixtures/xarray_tutorial/float_baseline.zarr')
+WHERE lat > 0 AND lon < 180;
 ```
 
 For a small bioimage walkthrough, see [Querying OME-Zarr](ome-zarr.md).
@@ -63,19 +64,19 @@ Use metadata discovery first to see the available store-relative paths:
 
 ```sql
 SELECT name, dims, shape, dtype
-FROM read_zarr_metadata('/path/to/image.ome.zarr');
+FROM read_zarr_metadata('test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr');
 ```
 
 Then pass `array_path=` when you want a specific image or label array:
 
 ```sql
-SELECT c, AVG("0") AS mean_intensity
-FROM read_zarr('/path/to/image.ome.zarr', array_path='0')
+SELECT c, AVG(value) AS mean_intensity
+FROM read_zarr('test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr', array_path='0')
 GROUP BY c;
 
-SELECT "labels/nuclei/0" AS label, COUNT(*) AS pixels
-FROM read_zarr('/path/to/image.ome.zarr', array_path='labels/nuclei/0')
-WHERE "labels/nuclei/0" > 0
+SELECT value AS label, COUNT(*) AS pixels
+FROM read_zarr('test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr', array_path='labels/nuclei/0')
+WHERE value > 0
 GROUP BY label;
 ```
 

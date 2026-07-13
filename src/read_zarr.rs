@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use duckdb::core::{DataChunkHandle, LogicalTypeId};
-use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
+use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
+use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab, Value};
 
 use crate::zarr_reader::meta::{
     build_column_defs, build_work_units, dim_group_for_array, dimension_names, extract_file_system,
@@ -74,10 +74,11 @@ impl VTab for ReadZarrVTab {
         let path_val = bind.get_parameter(0);
         let store_path = path_val.to_string();
 
-        // Optional dims= named parameter: JSON array string e.g. '["time","lat","lon"]'
+        // Optional dims= named parameter: a list of dimension names,
+        // e.g. read_zarr(store, dims=['time','lat','lon']).
         let requested_dims: Option<Vec<String>> = bind
             .get_named_parameter("dims")
-            .map(|v| parse_dims_param(&v.to_string()))
+            .map(parse_dims_param)
             .transpose()?;
         let array_path = bind
             .get_named_parameter("array_path")
@@ -92,14 +93,19 @@ impl VTab for ReadZarrVTab {
 
         let fs = unsafe { extract_file_system(bind) };
         let store = open_store(&store_path, Some(fs))?;
-        let array_names = crate::zarr_reader::meta::list_array_names(&store_path, &store)?;
-
-        if array_names.is_empty() {
-            return Err(format!("no Zarr arrays found in '{store_path}'").into());
-        }
-
         if let Some(requested) = requested_array {
-            let array_name = select_array_name(&array_names, &requested)?;
+            // Only this one array is needed. Listing requires consolidated metadata
+            // on remote stores, so here it is best-effort: when available it lets
+            // coordinate arrays be resolved; when not (e.g. an OME-Zarr store served
+            // over HTTP without consolidation) the array still reads by array_path,
+            // with dimensions synthesized as integer indices.
+            let array_names =
+                crate::zarr_reader::meta::list_array_names(&store_path, &store).unwrap_or_default();
+            let array_name = if array_names.is_empty() {
+                requested.trim().trim_matches('/').to_string()
+            } else {
+                select_array_name(&array_names, &requested)?
+            };
             let group = dim_group_for_array(&store, &array_names, &array_name)?;
             if let Some(dims) = requested_dims {
                 if group.dims != dims {
@@ -111,6 +117,11 @@ impl VTab for ReadZarrVTab {
                 }
             }
             return finish_bind(bind, store, &group);
+        }
+
+        let array_names = crate::zarr_reader::meta::list_array_names(&store_path, &store)?;
+        if array_names.is_empty() {
+            return Err(format!("no Zarr arrays found in '{store_path}'").into());
         }
 
         let (dim_groups, _coord_names) = infer_dim_groups(&store, &array_names)?;
@@ -244,7 +255,10 @@ impl VTab for ReadZarrVTab {
 
     fn named_parameters() -> Option<Vec<(String, duckdb::core::LogicalTypeHandle)>> {
         Some(vec![
-            ("dims".to_string(), LogicalTypeId::Varchar.into()),
+            (
+                "dims".to_string(),
+                LogicalTypeHandle::list(&LogicalTypeId::Varchar.into()),
+            ),
             ("array".to_string(), LogicalTypeId::Varchar.into()),
             ("array_path".to_string(), LogicalTypeId::Varchar.into()),
         ])
@@ -255,22 +269,22 @@ impl VTab for ReadZarrVTab {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse a `dims` named-parameter value into an ordered list of dimension names.
+/// Extract the ordered dimension names from a `dims` named-parameter value.
 ///
-/// Accepts either a JSON array (`'["time","lat","lon"]'`) or a plain
-/// comma-separated string (`'time,lat,lon'`).
-fn parse_dims_param(s: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let trimmed = s.trim();
-    if trimmed.starts_with('[') {
-        let arr: Vec<String> = serde_json::from_str(trimmed)?;
-        Ok(arr)
-    } else {
-        Ok(trimmed
-            .split(',')
-            .map(|d| d.trim().to_string())
-            .filter(|d| !d.is_empty())
-            .collect())
-    }
+/// `dims` is a `LIST(VARCHAR)`, e.g. `read_zarr(store, dims=['time','lat','lon'])`.
+/// A single data-variable column selected by `array_path` has a numeric level
+/// name (`0`) or a nested store-relative path (`labels/nuclei/0`), both of which
+/// otherwise need SQL double-quoting. Surface it as `value` instead. Ordinary
+/// variable names (`temperature`, `precip`) are left unchanged.
+fn needs_value_alias(name: &str) -> bool {
+    name.contains('/') || name.parse::<u64>().is_ok()
+}
+
+fn parse_dims_param(value: Value) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let items = value
+        .to_list()
+        .ok_or("dims must be a list of dimension names, e.g. dims=['time','lat','lon']")?;
+    Ok(items.iter().map(|item| item.to_string()).collect())
 }
 
 fn finish_bind(
@@ -291,10 +305,19 @@ fn finish_bind(
 
     let columns = build_column_defs(&store, group, &coord_arrays)?;
 
-    // Register output columns with DuckDB.
+    // Register output columns with DuckDB. When a single array is selected by
+    // array_path, its name is a numeric level (`0`) or a nested store-relative
+    // path (`labels/nuclei/0`); surface that value column as `value` so callers
+    // don't have to double-quote it. Decoding still keys off `col.name`.
+    let single_data_var = columns.iter().filter(|c| !c.is_coord).count() == 1;
     for col in &columns {
         let duckdb_type = col.on_disk_dtype.to_duckdb_type(&col.encoding);
-        bind.add_result_column(&col.name, duckdb_type);
+        let display_name = if single_data_var && !col.is_coord && needs_value_alias(&col.name) {
+            "value"
+        } else {
+            col.name.as_str()
+        };
+        bind.add_result_column(display_name, duckdb_type);
     }
 
     // Pre-open data variable arrays once at bind time.

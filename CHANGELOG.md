@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-11
+
+### Fixed
+- Read Zarr **v2** stores over HTTP/S3/GCS/Azure by consuming their consolidated `.zmetadata`. `read_zarr`, `read_zarr_metadata`, and `read_zarr_groups` previously errored on *every* remote v2 store (`remote Zarr store has no consolidated metadata in zarr.json`) because `list_array_names_remote` only understood the Zarr v3 `consolidated_metadata` block. Object stores can't list directories, so v2's separate `.zmetadata` object is the only way to enumerate arrays remotely; the reader now falls back to it. Public v2 stores such as Pangeo GPCP and ARCO-ERA5 read directly from their URL. Covered by `test/test_http_integration.py` (v2 `.zmetadata`, v3 `consolidated_metadata`, and an OME-Zarr bioimage — `array_path` selection plus a nested label image — over a loopback HTTP server; `make test_http_debug`) and by `test/test_http_integration_real.py`, which reads the live public Pangeo GPCP v2 store end-to-end (`make test_http_real`, network-gated). The OME-Zarr fixture is now written with consolidated metadata so it is readable over HTTP as well as locally.
+- Read OME-Zarr images by `array_path` even when the store has no consolidated metadata. `array_path=` now opens the requested array directly instead of first listing the whole store, and dimension names fall back to the OME `multiscales.axes` when the array carries neither `dimension_names` nor `_ARRAY_DIMENSIONS`. Real public bioimage stores (e.g. the IDR) now read via `read_zarr(url, array_path='0')` — covered by a network-gated test in `test/test_http_integration_real.py`.
+- An array selected by `array_path` exposes its data as a `value` column, so numeric levels (`0`) and nested paths (`labels/nuclei/0`) no longer need to be double-quoted as SQL identifiers.
+- `dims=` is now a `LIST(VARCHAR)` — `read_zarr(store, dims=['time','lat','lon'])`, the idiomatic SQL form. It was previously a `VARCHAR` that accepted only a comma-separated or JSON-array *string* (and the SQL-list form errored at bind with `expected ident`).
+- Docs now use real, runnable examples verified against the extension — the public GPCP store in `README.md`, plus this repo's fixtures in `docs/README.md` and `docs/ome-zarr.md` — replacing the `path/to/...` and `image.ome.zarr` placeholders.
+
+## [0.1.0] - 2026-07-07
+
 ### Fixed
 - Rename the crate/extension from `duckdb_zarr` to `zarr` throughout (Cargo package name, `Makefile` `EXTENSION_NAME`, `MainDistributionPipeline.yml`, tests, docs). The prior partial rename only updated `description.yml` and added a `zarr_init_c_api` alias; native community builds still produced and looked for `duckdb_zarr` artifacts because the Rust crate name (and thus the compiled library filename) didn't match, and the `Makefile`'s plain `EXTENSION_NAME=duckdb_zarr` assignment overrode the `EXTENSION_NAME` env var the CI distribution workflow passes in.
 - CI: align DuckDB to v1.5.4 across all three version sites — crate `=1.10504.0`, workflow `duckdb_version`, and `Makefile` `TARGET_DUCKDB_VERSION` (the last stamps the extension metadata `duckdb_version`; with `USE_UNSTABLE_C_API=1` the loader requires an *exact* match) — so the built extension loads in the `duckdb_sqllogictest` test runner, which had moved to 1.5.4. Fixes macOS-arm64/Windows test-load version-mismatch failures. Wrapped now-`unsafe` `FlatVector::as_mut_ptr` calls per the 1.10504.0 API.

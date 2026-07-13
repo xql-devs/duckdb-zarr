@@ -216,6 +216,13 @@ def main() -> None:
         )
         print(f"  wrote nested labels to {dest}")
 
+    # Consolidate the OME-Zarr store so it is also readable over HTTP. Remote
+    # (object-store) listing needs consolidated metadata; local reads scan
+    # directories and ignore it. Idempotent — skipped once already consolidated.
+    if "consolidated_metadata" not in (dest / "zarr.json").read_text():
+        zarr.consolidate_metadata(str(dest))
+        print(f"  consolidated {dest}")
+
     # ── float_baseline (synthetic) ───────────────────────────────────────────
     # True float32 baseline with no packing, no sentinels.
     # Tests: basic read_zarr, coord classification, plain numeric copy path.
@@ -549,6 +556,49 @@ def main() -> None:
                   for v in ("temperature", "lat", "lon", "time")}
         xr.Dataset({"temperature": da}).to_zarr(
             dest, zarr_format=2, consolidated=False, encoding=v2_enc)
+        print(f"  wrote {dest}")
+
+    # ── consolidated_{v2,v3}_http ────────────────────────────────────────────
+    # Remote (HTTP/object) stores cannot list directories, so the Rust reader
+    # enumerates arrays from consolidated metadata. These two fixtures cover both
+    # remote code paths in list_array_names_remote (see test/test_http_integration.py):
+    #   * v2 → a separate `.zmetadata` object
+    #   * v3 → a `consolidated_metadata` block embedded in `zarr.json`
+    # Same 8×6×12 (time, lat, lon) grid so the HTTP assertions are shared.
+    rng = np.random.default_rng(0)
+    http_data = rng.standard_normal((8, 6, 12)).astype("float32")
+    http_lat = np.linspace(-90.0, 90.0, 6)
+    http_lon = np.linspace(0.0, 360.0, 12, endpoint=False)
+    http_time = np.arange(8, dtype="int64")
+    http_da = xr.DataArray(
+        http_data, dims=["time", "lat", "lon"],
+        coords={"time": http_time, "lat": http_lat, "lon": http_lon},
+        attrs={"units": "K", "long_name": "temperature"})
+    http_ds = xr.Dataset({"temperature": http_da})
+
+    print("consolidated_v2_http (zarr v2 + .zmetadata)...")
+    dest = FIXTURES / "consolidated_v2_http.zarr"
+    if (dest / ".zmetadata").exists():
+        print(f"  (cached) {dest}")
+    else:
+        if dest.exists():
+            _rmtree(dest)
+        # gzip (not blosc): blosc build fails on macOS Tahoe; matches float_baseline_v2.
+        v2_enc = {v: {"compressor": {"id": "gzip", "level": 1}}
+                  for v in ("temperature", "lat", "lon", "time")}
+        http_ds.to_zarr(dest, zarr_format=2, consolidated=True, encoding=v2_enc)
+        print(f"  wrote {dest}")
+
+    print("consolidated_v3_http (zarr v3 + consolidated_metadata)...")
+    dest = FIXTURES / "consolidated_v3_http.zarr"
+    root_meta = dest / "zarr.json"
+    if root_meta.exists() and "consolidated_metadata" in root_meta.read_text():
+        print(f"  (cached) {dest}")
+    else:
+        if dest.exists():
+            _rmtree(dest)
+        http_ds.to_zarr(dest, zarr_format=3, consolidated=False)
+        zarr.consolidate_metadata(str(dest))
         print(f"  wrote {dest}")
 
     print("\nAll fixtures written.")

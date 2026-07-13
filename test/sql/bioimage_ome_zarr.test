@@ -21,7 +21,7 @@ FROM read_zarr(
 
 # Named xarray dimensions make channel and spatial queries self-describing.
 query II rowsort
-SELECT c, SUM("0")
+SELECT c, SUM(value)
 FROM read_zarr(
     'test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr',
     array_path = '0'
@@ -33,7 +33,7 @@ GROUP BY c;
 
 # Query a spatial region from the DNA channel using image-axis names.
 query II
-SELECT COUNT(*), SUM("0")
+SELECT COUNT(*), SUM(value)
 FROM read_zarr(
     'test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr',
     array_path = '0'
@@ -60,7 +60,7 @@ labels/nuclei/0	data
 
 # array_path= selects a nested image-label array while retaining named image axes.
 query III
-SELECT COUNT(*), COUNT(*) FILTER (WHERE "labels/nuclei/0" > 0), SUM("labels/nuclei/0")
+SELECT COUNT(*), COUNT(*) FILTER (WHERE value > 0), SUM(value)
 FROM read_zarr(
     'test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr',
     array_path = 'labels/nuclei/0'

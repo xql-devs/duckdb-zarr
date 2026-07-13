@@ -1,7 +1,7 @@
 extension:
   name: zarr
   description: Query Zarr array stores (v2 and v3) with SQL — read xarray-convention datasets as tables
-  version: 0.1.0
+  version: 0.1.1
   language: Rust
   build: cargo
   requires_toolchains: "rust;python3"
@@ -29,7 +29,8 @@ docs:
     **Functions**
 
     - `read_zarr(path)` — scan all rows from a single-group Zarr store.
-    - `read_zarr(path, dims=['time','lat','lon'])` — select one dim group from a multi-group store.
+    - `read_zarr(path, dims=['time','lat','lon'])` — select one dim group from a multi-group store
+      (`dims` is a list of dimension names).
     - `read_zarr_metadata(path)` — inspect array names, dtypes, shapes, and roles.
     - `read_zarr_groups(path)` — enumerate distinct dimension groups in a store.
 
@@ -47,6 +48,7 @@ docs:
     - Zarr v2 and v3
     - Codecs: gzip, zstd, blosc, crc32c, sharding, transpose, bytes (big/little endian)
     - CF conventions: `scale_factor`/`add_offset` packed integers, `_FillValue`/`missing_value` null masking
-    - Local filesystem, HTTP/HTTPS, S3, GCS, and Azure Blob Storage
-      (consolidated metadata required for remote array listing; S3/GCS/Azure credentials
-      are read from DuckDB's secrets manager — `CREATE SECRET ... TYPE S3` etc.)
+    - Local filesystem, HTTP/HTTPS, S3, GCS, and Azure Blob Storage. Remote stores must carry
+      consolidated metadata — a Zarr v2 `.zmetadata` object or a Zarr v3 `consolidated_metadata`
+      block — because object stores cannot list directories. S3/GCS/Azure credentials are read
+      from DuckDB's secrets manager — `CREATE SECRET ... TYPE S3` etc.

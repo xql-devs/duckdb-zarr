@@ -5,29 +5,44 @@
 A Rust DuckDB extension that lets you query [Zarr](https://zarr.dev/) stores with SQL — in the same spirit as [xarray-sql](https://github.com/alxmrs/xarray-sql) and [zarr-datafusion](https://lib.rs/crates/zarr-datafusion), but as a first-class DuckDB extension with no external query engine.
 
 ```sql
--- Local store: path ending in .zarr is intercepted automatically
+-- Query a public Zarr store straight from its URL. GPCP is a multi-group store
+-- (a precip variable plus CF bounds), so pick the group with dims= — a list of
+-- dimension names.
+SELECT time, latitude, longitude, precip
+FROM read_zarr(
+  'https://ncsa.osn.xsede.org/Pangeo/pangeo-forge/gpcp-feedstock/gpcp.zarr',
+  dims=['time','latitude','longitude']
+)
+LIMIT 10;
+
+-- Inspect a store's arrays — a local path or a URL
+SELECT name, role, dtype, shape
+FROM read_zarr_metadata('https://ncsa.osn.xsede.org/Pangeo/pangeo-forge/gpcp-feedstock/gpcp.zarr');
+
+-- Single-group stores need no dims=; a path/URL ending in .zarr is intercepted
+-- automatically. (These use this repo's fixtures — run `make generate_fixtures` first.)
 SELECT lat, lon, AVG(temperature)
-FROM 'era5.zarr'
+FROM 'test/fixtures/xarray_tutorial/float_baseline.zarr'
 GROUP BY lat, lon;
 
--- HTTP/HTTPS stores also work via replacement scan
-SELECT * FROM 'https://example.com/data.zarr';
+-- Select one array by its store-relative path (e.g. an OME-Zarr resolution level or nested label)
+SELECT * FROM read_zarr('test/fixtures/bioimage/ome_zarr/synthetic_multichannel.ome.zarr', array_path='0');
 
--- Explicit table function with optional dims= for multi-group stores
-SELECT * FROM read_zarr('path/to/store.zarr', dims=['time', 'lat', 'lon']);
-
--- Select one array by its store-relative path (including nested arrays)
-SELECT * FROM read_zarr('image.ome.zarr', array_path='labels/nuclei/0');
-
--- Inspect arrays in a store
-SELECT name, role, dtype, shape FROM read_zarr_metadata('path/to/store.zarr');
-
--- List dimension groups
-SELECT * FROM read_zarr_groups('path/to/store.zarr');
+-- List a store's dimension groups
+SELECT dims, shape, data_vars FROM read_zarr_groups('test/fixtures/xarray_tutorial/multi_dim_group.zarr');
 ```
 
 See [docs/design.md](docs/design.md) for the full design and
 [docs/ome-zarr.md](docs/ome-zarr.md) for a small bioimage example.
+
+## Remote stores
+
+Read directly from a URL — HTTP/HTTPS, S3, GCS, or Azure. Object stores can't list
+directories, so a remote store must carry **consolidated metadata**: a Zarr v2
+`.zmetadata` object or a Zarr v3 `consolidated_metadata` block. Most published
+datasets already do (e.g. anything written by xarray with `consolidated=True`), so
+they read straight from their URL as shown above. S3/GCS/Azure credentials come from
+DuckDB's secrets manager (`CREATE SECRET ... TYPE S3`).
 
 ## Status
 
@@ -52,10 +67,14 @@ Requires: Rust toolchain, Python 3.11+, make, git.
 ## Testing
 
 ```shell
-make test_debug   # or make test_release
+make test_debug   # SQLLogicTest suite over local stores (or make test_release)
+make test_http    # HTTP integration tests: synthetic loopback + a real public store
 ```
 
-Tests are in `test/sql/` (SQLLogicTest format). Fixtures are generated automatically by `make test_*`. To regenerate manually:
+SQLLogicTest cases live in `test/sql/`. The HTTP suite (`test/test_http_integration*.py`)
+reads stores over HTTP: synthetic v2 `.zmetadata` and v3 `consolidated_metadata` fixtures
+via a loopback server, plus the live public GPCP store (network-gated — skipped when
+unreachable). Fixtures are generated automatically by `make test_*`. To regenerate manually:
 
 ```shell
 make generate_fixtures

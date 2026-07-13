@@ -9,7 +9,7 @@ use duckdb::ffi::{
 };
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::ReadableStorageTraits;
+use zarrs::storage::{ReadableStorageTraits, StoreKey};
 
 use super::duckdb_store::DuckDbStore;
 use super::types::{
@@ -84,7 +84,9 @@ pub fn open_store(
 /// List the store-relative paths of all arrays in the Zarr hierarchy.
 ///
 /// - Local paths: recursively scans directories containing `zarr.json` (v3) or `.zarray` (v2).
-/// - Remote paths (HTTP/HTTPS/S3/GCS/Azure): reads consolidated metadata from the root zarr.json.
+/// - Remote paths (HTTP/HTTPS/S3/GCS/Azure): enumerates arrays from consolidated metadata,
+///   since object stores cannot list directories — a v3 `consolidated_metadata` block in
+///   `zarr.json`, or a v2 `.zmetadata` object.
 pub fn list_array_names(
     store_path: &str,
     store: &ZarrStore,
@@ -156,25 +158,62 @@ fn list_array_names_remote(store: &ZarrStore) -> Result<Vec<String>, Box<dyn std
     use zarrs::group::Group;
     use zarrs::metadata::NodeMetadata;
 
+    // Zarr v3: consolidated metadata is embedded in the root `zarr.json`.
     let group = Group::open(store.clone(), "/")?;
-    let consolidated = group.consolidated_metadata().ok_or(
-        "remote Zarr store has no consolidated metadata in zarr.json; \
-         re-write the store with consolidated=True (xarray: zarr.consolidate_metadata(store))",
-    )?;
-    let mut names: Vec<String> = consolidated
-        .metadata
-        .iter()
-        .filter_map(|(path, meta)| {
-            let name = path.trim_start_matches('/');
-            if matches!(meta, NodeMetadata::Array(_)) {
-                Some(name.to_string())
-            } else {
-                None
-            }
-        })
+    if let Some(consolidated) = group.consolidated_metadata() {
+        let mut names: Vec<String> = consolidated
+            .metadata
+            .iter()
+            .filter_map(|(path, meta)| {
+                let name = path.trim_start_matches('/');
+                if matches!(meta, NodeMetadata::Array(_)) {
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        names.sort();
+        return Ok(names);
+    }
+
+    // Zarr v2: consolidated metadata lives in a separate `.zmetadata` object.
+    // HTTP/object stores cannot list directories, so `.zmetadata` is the only
+    // way to enumerate a v2 store's arrays remotely.
+    if let Some(names) = list_array_names_zmetadata(store)? {
+        return Ok(names);
+    }
+
+    Err(
+        "remote Zarr store has no consolidated metadata: found neither a v3 \
+         `consolidated_metadata` block in `zarr.json` nor a v2 `.zmetadata` object. \
+         Re-write the store with consolidated metadata \
+         (xarray: `ds.to_zarr(store, consolidated=True)`)."
+            .into(),
+    )
+}
+
+/// Enumerate array names from a Zarr v2 consolidated-metadata (`.zmetadata`) object.
+///
+/// Returns `Ok(None)` when the store has no `.zmetadata`, so the caller can emit a
+/// single clear error. Arrays are the entries whose key ends in `/.zarray`.
+fn list_array_names_zmetadata(
+    store: &ZarrStore,
+) -> Result<Option<Vec<String>>, Box<dyn std::error::Error>> {
+    let Some(bytes) = store.get(&StoreKey::new(".zmetadata")?)? else {
+        return Ok(None);
+    };
+    let doc: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let metadata = doc
+        .get("metadata")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("`.zmetadata` is missing its `metadata` object")?;
+    let mut names: Vec<String> = metadata
+        .keys()
+        .filter_map(|key| key.strip_suffix("/.zarray").map(str::to_string))
         .collect();
     names.sort();
-    Ok(names)
+    Ok(Some(names))
 }
 
 /// Open one array by name from the store.
@@ -213,8 +252,16 @@ pub fn dim_group_for_array(
     array_name: &str,
 ) -> Result<DimGroup, Box<dyn std::error::Error>> {
     let arr = open_array(store, array_name)?;
-    let dims = dimension_names(&arr, array_name)?;
     let shape = arr.shape().to_vec();
+    // Named dimensions come from xarray metadata; fall back to OME-Zarr
+    // `multiscales.axes` (matched by rank) for stores that carry neither
+    // `dimension_names` nor `_ARRAY_DIMENSIONS` on the array itself.
+    let dims = match dimension_names(&arr, array_name) {
+        Ok(dims) => dims,
+        Err(err) => ome_axis_names(store, array_name)
+            .filter(|axes| axes.len() == shape.len())
+            .ok_or(err)?,
+    };
     let first_chunk = vec![0u64; shape.len()];
     let chunk_shape = arr
         .chunk_shape(&first_chunk)?
@@ -233,6 +280,52 @@ pub fn dim_group_for_array(
         data_var_names: vec![array_name.to_string()],
         coord_var_names,
     })
+}
+
+/// OME-Zarr fallback for dimension names.
+///
+/// Real OME-Zarr images record axis names in the parent group's
+/// `multiscales.axes` rather than in per-array `dimension_names` /
+/// `_ARRAY_DIMENSIONS`. This resolves them by matching the array to its
+/// `multiscales.datasets[].path` entry, recovering `c`/`z`/`y`/`x` for
+/// `array_path` reads of stores like those in the IDR.
+fn ome_axis_names(store: &ZarrStore, array_name: &str) -> Option<Vec<String>> {
+    use zarrs::group::Group;
+
+    let (group_path, dataset) = match array_name.rsplit_once('/') {
+        Some((group, ds)) => (format!("/{group}"), ds),
+        None => ("/".to_string(), array_name),
+    };
+    let group = Group::open(store.clone(), &group_path).ok()?;
+    let multiscales = group.attributes().get("multiscales")?.as_array()?;
+    for ms in multiscales {
+        let matches_dataset = ms
+            .get("datasets")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|datasets| {
+                datasets
+                    .iter()
+                    .any(|d| d.get("path").and_then(serde_json::Value::as_str) == Some(dataset))
+            });
+        if !matches_dataset {
+            continue;
+        }
+        let Some(axes) = ms.get("axes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        let names: Vec<String> = axes
+            .iter()
+            .filter_map(|axis| {
+                axis.get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(String::from)
+            })
+            .collect();
+        if !names.is_empty() {
+            return Some(names);
+        }
+    }
+    None
 }
 
 fn parent_path(name: &str) -> &str {

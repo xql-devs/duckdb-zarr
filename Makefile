@@ -1,4 +1,4 @@
-.PHONY: clean clean_all clippy fmt fmt-check generate_fixtures lint release-check render-community-descriptor
+.PHONY: clean clean_all clippy fmt fmt-check generate_fixtures lint release-check render-community-descriptor test_http test_http_debug test_http_release test_http_real
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -38,6 +38,28 @@ release: build_extension_library_release build_extension_with_metadata_release
 test: test_debug
 test_debug: generate_fixtures test_extension_debug
 test_release: generate_fixtures test_extension_release
+
+# HTTP integration tests. Build the extension first (make debug / make release).
+# pytest runs via uv, so no venv setup is needed; duckdb is pinned to the target
+# DuckDB version. Both files run together as one suite:
+#   test_http_integration.py      — loopback http.server + synthetic fixtures
+#                                   (deterministic; v2 .zmetadata + v3 consolidated_metadata)
+#   test_http_integration_real.py — reads a real public v2 store over the internet
+#                                   (network-marked; skips when the store is unreachable)
+# test_http_real runs only the real-data file.
+test_http: test_http_debug
+test_http_debug: generate_fixtures
+	uv run --with pytest --with 'duckdb==$(TARGET_DUCKDB_VERSION:v%=%)' \
+		pytest test/test_http_integration.py test/test_http_integration_real.py \
+		--extension build/debug/$(EXTENSION_NAME).duckdb_extension -v
+test_http_release: generate_fixtures
+	uv run --with pytest --with 'duckdb==$(TARGET_DUCKDB_VERSION:v%=%)' \
+		pytest test/test_http_integration.py test/test_http_integration_real.py \
+		--extension build/release/$(EXTENSION_NAME).duckdb_extension -v
+test_http_real:
+	uv run --with pytest --with 'duckdb==$(TARGET_DUCKDB_VERSION:v%=%)' \
+		pytest test/test_http_integration_real.py \
+		--extension build/debug/$(EXTENSION_NAME).duckdb_extension -v
 
 fmt:
 	cargo fmt --all
