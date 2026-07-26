@@ -8,6 +8,12 @@ on:
       ref:
         description: Release tag or 40-character commit hash to publish
         required: true
+      ref_next:
+        description: >-
+          Optional commit/tag built for the upcoming DuckDB version (emitted as
+          repo.ref_next so the community rebuild can serve it immediately on that
+          DuckDB release).
+        required: false
 
 permissions:
   contents: read
@@ -18,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_REF: ${{ github.event.release.tag_name || inputs.ref }}
+      RELEASE_REF_NEXT: ${{ inputs.ref_next }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,9 +35,12 @@ jobs:
 
       - name: Render descriptor for release ref
         run: |
-          uv run scripts/render_community_descriptor.py \
-            --ref "$RELEASE_REF" \
-            --out build/community-extensions/extensions/zarr/description.yml
+          args=(--ref "$RELEASE_REF"
+                --out build/community-extensions/extensions/zarr/description.yml)
+          if [ -n "$RELEASE_REF_NEXT" ]; then
+            args+=(--ref-next "$RELEASE_REF_NEXT")
+          fi
+          uv run scripts/render_community_descriptor.py "${args[@]}"
 
       - name: Validate rendered descriptor
         run: |
