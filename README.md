@@ -1,3 +1,5 @@
+<img src="docs/images/logo.png" alt="duckdb-zarr logo" width="360">
+
 # duckdb-zarr
 
 [![Main Extension Distribution Pipeline](https://github.com/alxmrs/duckdb-zarr/actions/workflows/MainDistributionPipeline.yml/badge.svg)](https://github.com/alxmrs/duckdb-zarr/actions/workflows/MainDistributionPipeline.yml)
