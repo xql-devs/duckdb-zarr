@@ -15,7 +15,7 @@ jobs:
     name: prek
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
@@ -24,3 +24,16 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
       - uses: j178/prek-action@v2
+
+  release-metadata:
+    name: Release metadata consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Fails the PR if the three DuckDB version sites (Makefile
+      # TARGET_DUCKDB_VERSION, MainDistributionPipeline duckdb_version, Cargo.toml
+      # crate pin) disagree, or if the community descriptor fields drift. With
+      # USE_UNSTABLE_C_API=1 an inconsistent pin ships a binary that no DuckDB
+      # can load, so this guards every change — not just releases.
+      - name: Check release-critical metadata
+        run: python3 scripts/check_release_ready.py

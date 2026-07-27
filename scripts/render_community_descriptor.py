@@ -52,7 +52,21 @@ def validate_ref(ref: str, version: str) -> None:
     )
 
 
-def render(ref: str, version: str) -> str:
+def validate_ref_next(ref_next: str) -> None:
+    # ref_next points at the commit built for the *upcoming* DuckDB version, so
+    # it is not tied to this release's version. Any immutable ref is acceptable:
+    # a 40-character commit hash (the usual "latest commit of the vx.y-codename
+    # branch") or a version tag.
+    if re.fullmatch(r"[0-9a-f]{40}", ref_next) or re.fullmatch(
+        r"v\d+\.\d+\.\d+", ref_next
+    ):
+        return
+    raise ValueError(
+        f"ref_next must be a 40-character commit hash or a vX.Y.Z tag; got {ref_next!r}"
+    )
+
+
+def render(ref: str, version: str, ref_next: str | None = None) -> str:
     text = read("description.yml")
 
     text = re.sub(
@@ -69,9 +83,18 @@ def render(ref: str, version: str) -> str:
         count=1,
         flags=re.MULTILINE,
     )
+
+    def replace_ref(match: re.Match[str]) -> str:
+        indent = match.group(1)
+        rendered = f"{indent}ref: {ref}"
+        if ref_next is not None:
+            # ref_next sits alongside ref in the repo block, at the same indent.
+            rendered += f"\n{indent}ref_next: {ref_next}"
+        return rendered
+
     text = re.sub(
-        r"^(\s*ref:\s*)[^\s#]+.*$",
-        rf"\g<1>{ref}",
+        r"^(\s*)ref:\s*[^\s#]+.*$",
+        replace_ref,
         text,
         count=1,
         flags=re.MULTILINE,
@@ -82,6 +105,15 @@ def render(ref: str, version: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", required=True, help="release tag or commit hash")
+    parser.add_argument(
+        "--ref-next",
+        default=None,
+        help=(
+            "optional commit/tag built for the upcoming DuckDB version; emitted as "
+            "repo.ref_next so the community rebuild can serve it the moment that "
+            "DuckDB version is released"
+        ),
+    )
     parser.add_argument(
         "--out",
         required=True,
@@ -98,13 +130,16 @@ def main() -> int:
     version = unique_versions.pop()
     try:
         validate_ref(args.ref, version)
+        if args.ref_next is not None:
+            validate_ref_next(args.ref_next)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(args.ref, version), encoding="utf-8")
-    print(f"wrote {out.relative_to(ROOT)} for zarr {version} at {args.ref}")
+    out.write_text(render(args.ref, version, args.ref_next), encoding="utf-8")
+    suffix = f" (ref_next {args.ref_next})" if args.ref_next else ""
+    print(f"wrote {out.relative_to(ROOT)} for zarr {version} at {args.ref}{suffix}")
     return 0
 
 

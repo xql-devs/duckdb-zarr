@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Target DuckDB **v1.5.5** (crate `=1.10505.0`) across the three pinned sites (`Makefile` `TARGET_DUCKDB_VERSION`, `MainDistributionPipeline.yml` `duckdb_version`, `Cargo.toml`) plus `Cargo.lock`. With `USE_UNSTABLE_C_API=1` a binary built for v1.5.4 is rejected by v1.5.5's loader (exact-version `C_STRUCT_UNSTABLE` ABI), which is why the community extension went unavailable after DuckDB 1.5.5. Compiles against 1.10505.0 with no source changes.
+
+### Added
+- **CI guard**: a `Release metadata consistency` job in `rust-quality.yml` runs `scripts/check_release_ready.py` on every PR, so the three DuckDB version sites can no longer merge out of sync (an inconsistent pin ships a binary no DuckDB can load).
+- **`ref_next` tooling**: `scripts/render_community_descriptor.py` gains `--ref-next` (also `make render-community-descriptor REF=... REF_NEXT=...` and a `ref_next` dispatch input on `community-release.yml`); `check_release_ready.py` validates it is an immutable ref. `ref_next` is the one mechanism that closes the availability gap for a version-locked extension — pre-staging the upcoming-DuckDB commit means the community rebuild has a working binary the moment that DuckDB version ships. See `docs/community-extension-release.md`.
+- **Drift bot reach**: `duckdb-version-drift.yml` now runs daily (was weekly) and, when a new DuckDB *minor/major* line appears (which its within-minor patch bumps deliberately skip), opens an idempotent `duckdb-major-bump` tracking issue instead of leaving the jump unnoticed.
+
 ## [0.1.1] - 2026-07-11
 
 ### Fixed

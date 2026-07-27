@@ -57,6 +57,33 @@ maintainer downloads the artifact and opens the PR to
 `duckdb/community-extensions` manually. This keeps release automation read-only
 inside this repository while still making the submitted descriptor reproducible.
 
+Running the workflow via **Run workflow** (workflow_dispatch) also accepts an
+optional `ref_next` input. Supply the commit built for the upcoming DuckDB
+version and it is emitted as `repo.ref_next` in the rendered descriptor — see
+[Stable vs. Current DuckDB Main](#stable-vs-current-duckdb-main).
+
+## Staying Current With DuckDB Releases
+
+Because `USE_UNSTABLE_C_API=1` binds each binary to an exact DuckDB version (see
+[DuckDB Version Policy](#duckdb-version-policy)), the community extension goes
+stale the moment DuckDB ships a version this extension has not been rebuilt for.
+Three pieces of automation keep that window small:
+
+- **CI guard** — the `Release metadata consistency` job in
+  `.github/workflows/rust-quality.yml` runs `scripts/check_release_ready.py` on
+  every PR, so the three DuckDB version sites can never merge out of sync.
+- **`DuckDB Version Drift`** (`.github/workflows/duckdb-version-drift.yml`) runs
+  **daily**. Within the current minor line it opens a `chore/bump-duckdb-*` PR
+  as soon as pip `duckdb` and the matching `duckdb` crate publish a new patch.
+  When a new **minor or major** DuckDB line appears (e.g. `1.5.x → 1.6.0`) it
+  opens a `duckdb-major-bump` tracking issue instead, because that is a manual
+  migration (new CI-tools codename branch, possible source changes).
+- **`ref_next`** lets you pre-stage the next line so there is *no* gap at all —
+  covered below.
+
+The maintainer still cuts the release and opens the community PR (a deliberate
+choice — see above), but the source is kept release-ready automatically.
+
 ## Descriptor Notes
 
 The descriptor intentionally marks this as a Rust cargo extension and requests
@@ -140,3 +167,30 @@ Use `ref` for the commit that works with the latest stable DuckDB release. Use
 `ref_next` only when DuckDB `main` needs source changes that should not replace
 the stable build yet. After DuckDB releases, the community repository can promote
 the `ref_next` commit to `ref`.
+
+For a version-locked (Rust / `USE_UNSTABLE_C_API=1`) extension this is the one
+mechanism that closes the availability gap entirely: because a single commit can
+only build against one DuckDB version, `ref` covers today's stable and `ref_next`
+covers the upcoming release, so the community rebuild has a working binary the
+**moment** the new DuckDB version ships — no reactive catch-up.
+
+Render a descriptor carrying both refs with:
+
+```sh
+make render-community-descriptor REF=v0.1.1 REF_NEXT=<upcoming-commit-sha>
+```
+
+`REF_NEXT` accepts a 40-character commit hash or a `vX.Y.Z` tag; the strict
+release check validates it is immutable. The rendered descriptor is written to
+`build/community-extensions/extensions/zarr/description.yml`. The
+`community-release.yml` workflow exposes the same `ref_next` as a dispatch input.
+
+Practical flow when a new DuckDB line is announced:
+
+1. Branch off `main`, apply the migration (CI-tools codename branch, version
+   pins, any source fixes), and get CI green — this is the commit tracked by the
+   `duckdb-major-bump` issue the drift bot opens.
+2. Submit a community PR whose descriptor sets `ref` to the current stable
+   release and `ref_next` to that branch's HEAD commit.
+3. Once DuckDB releases, promote `ref_next` to `ref` on your next routine
+   submission.

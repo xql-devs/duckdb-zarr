@@ -111,6 +111,21 @@ def main() -> int:
         else:
             warnings.append(message)
 
+    # ref_next is optional (points at the commit built for the upcoming DuckDB
+    # version). When present it must be immutable too — the community rebuild
+    # pins it exactly, so a branch name here would silently drift.
+    ref_next_match = re.search(r"^\s*ref_next:\s*([^\s#]+)", description, re.MULTILINE)
+    if ref_next_match is not None:
+        ref_next = ref_next_match.group(1)
+        if not (
+            re.fullmatch(r"[0-9a-f]{40}", ref_next)
+            or re.fullmatch(r"v\d+\.\d+\.\d+", ref_next)
+        ):
+            failures.append(
+                "description.yml repo.ref_next must be a 40-character commit hash "
+                f"or a vX.Y.Z tag; current value is {ref_next!r}"
+            )
+
     if failures:
         print("release readiness check failed:", file=sys.stderr)
         for failure in failures:
