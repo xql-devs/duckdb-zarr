@@ -26,12 +26,12 @@ jobs:
       RELEASE_REF: ${{ github.event.release.tag_name || inputs.ref }}
       RELEASE_REF_NEXT: ${{ inputs.ref_next }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9
 
       - name: Render descriptor for release ref
         run: |
@@ -49,7 +49,7 @@ jobs:
             --strict-community-ref
 
       - name: Upload descriptor artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zarr-community-extension-descriptor
           path: build/community-extensions/extensions/zarr/description.yml

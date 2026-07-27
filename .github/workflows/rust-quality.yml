@@ -15,7 +15,7 @@ jobs:
     name: prek
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
@@ -29,7 +29,7 @@ jobs:
     name: Release metadata consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Fails the PR if the three DuckDB version sites (Makefile
       # TARGET_DUCKDB_VERSION, MainDistributionPipeline duckdb_version, Cargo.toml
       # crate pin) disagree, or if the community descriptor fields drift. With
