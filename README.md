@@ -1,4 +1,4 @@
-<img src="docs/images/logo.png" alt="duckdb-zarr logo" width="360">
+<img src="docs/images/logo.png" alt="duckdb-zarr logo" width="280">
 
 # duckdb-zarr
 
