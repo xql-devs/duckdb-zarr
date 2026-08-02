@@ -93,6 +93,7 @@ impl VTab for ReadZarrVTab {
 
         let fs = unsafe { extract_file_system(bind) };
         let store = open_store(&store_path, Some(fs))?;
+        let store = crate::zarr_reader::meta::with_consolidated_cache(&store_path, store);
         if let Some(requested) = requested_array {
             // Only this one array is needed. Listing requires consolidated metadata
             // on remote stores, so here it is best-effort: when available it lets

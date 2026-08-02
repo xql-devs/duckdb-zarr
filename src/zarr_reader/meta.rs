@@ -9,8 +9,9 @@ use duckdb::ffi::{
 };
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::{ReadableStorageTraits, StoreKey};
+use zarrs::storage::{Bytes, ReadableStorageTraits, StoreKey};
 
+use super::consolidated_store::ConsolidatedCacheStore;
 use super::duckdb_store::DuckDbStore;
 use super::types::{
     ColumnDef, ColumnEncoding, CoordArray, DimGroup, FillSentinel, WorkUnit, ZarrDtype,
@@ -79,6 +80,73 @@ pub fn open_store(
         }
         Ok(Arc::new(FilesystemStore::new(path)?))
     }
+}
+
+/// Wrap a remote store with an in-memory cache of its consolidated metadata,
+/// if any, so that the many per-array metadata opens in [`infer_dim_groups`]
+/// and [`finish_bind`](crate::read_zarr) are served from memory instead of one
+/// HTTP round trip each. A no-op for local stores or remote stores without
+/// consolidated metadata — in the worst case this costs one extra GET
+/// (`.zmetadata` or `zarr.json`) to find that out.
+pub fn with_consolidated_cache(store_path: &str, store: ZarrStore) -> ZarrStore {
+    if !is_remote_scheme(store_path) {
+        return store;
+    }
+    match build_consolidated_cache(&store) {
+        Ok(Some(cache)) if !cache.is_empty() => Arc::new(ConsolidatedCacheStore::new(store, cache)),
+        _ => store,
+    }
+}
+
+fn build_consolidated_cache(
+    store: &ZarrStore,
+) -> Result<Option<HashMap<StoreKey, Bytes>>, Box<dyn std::error::Error>> {
+    // Zarr v3: consolidated metadata is embedded in the root `zarr.json`, as a
+    // map of node path -> that node's full metadata document.
+    if let Some(bytes) = store.get(&StoreKey::new("zarr.json")?)? {
+        let doc: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(metadata) = doc
+            .get("consolidated_metadata")
+            .and_then(|c| c.get("metadata"))
+            .and_then(serde_json::Value::as_object)
+        {
+            let mut cache = HashMap::new();
+            cache.insert(StoreKey::new("zarr.json")?, bytes.clone());
+            for (name, node_meta) in metadata {
+                let name = name.trim_start_matches('/');
+                let key = if name.is_empty() {
+                    "zarr.json".to_string()
+                } else {
+                    format!("{name}/zarr.json")
+                };
+                cache.insert(
+                    StoreKey::new(key)?,
+                    Bytes::from(serde_json::to_vec(node_meta)?),
+                );
+            }
+            return Ok(Some(cache));
+        }
+    }
+
+    // Zarr v2: consolidated metadata lives in a separate `.zmetadata` object —
+    // a flat map from `<path>/.zarray` / `<path>/.zattrs` / `.zgroup` keys to
+    // their file contents.
+    if let Some(bytes) = store.get(&StoreKey::new(".zmetadata")?)? {
+        let doc: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(metadata) = doc.get("metadata").and_then(serde_json::Value::as_object) {
+            let mut cache = HashMap::new();
+            cache.insert(StoreKey::new(".zmetadata")?, bytes.clone());
+            for (key, value) in metadata {
+                cache.insert(
+                    StoreKey::new(key.as_str())?,
+                    Bytes::from(serde_json::to_vec(value)?),
+                );
+            }
+            return Ok(Some(cache));
+        }
+    }
+
+    Ok(None)
 }
 
 /// List the store-relative paths of all arrays in the Zarr hierarchy.
