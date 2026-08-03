@@ -9,8 +9,9 @@ use duckdb::ffi::{
 };
 use zarrs::array::Array;
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::{ReadableStorageTraits, StoreKey};
+use zarrs::storage::{Bytes, ReadableStorageTraits, StoreKey};
 
+use super::consolidated_store::ConsolidatedCacheStore;
 use super::duckdb_store::DuckDbStore;
 use super::types::{
     ColumnDef, ColumnEncoding, CoordArray, DimGroup, FillSentinel, WorkUnit, ZarrDtype,
@@ -57,28 +58,129 @@ pub fn is_remote_scheme(path: &str) -> bool {
 /// - S3/GCS/Azure → `DuckDbStore` backed by the provided `file_system` handle
 ///   (the store takes ownership and destroys it on drop)
 /// - Local path → `zarrs::FilesystemStore` (destroys the handle if provided)
+///
+/// Remote stores are additionally wrapped with an in-memory consolidated-
+/// metadata cache when one is available (see [`with_consolidated_cache`]),
+/// so callers get the fast path for free instead of having to remember to
+/// apply it themselves.
 pub fn open_store(
     path: &str,
     file_system: Option<duckdb_file_system>,
 ) -> Result<ZarrStore, Box<dyn std::error::Error>> {
     let lower = path.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
+    let store: ZarrStore = if lower.starts_with("http://") || lower.starts_with("https://") {
         if let Some(mut fs) = file_system {
             unsafe { duckdb_destroy_file_system(&mut fs) };
         }
-        Ok(Arc::new(zarrs_http::HTTPStore::new(path)?))
+        Arc::new(zarrs_http::HTTPStore::new(path)?)
     } else if lower.starts_with("s3://") || lower.starts_with("gs://") || lower.starts_with("az://")
     {
         let fs = file_system.ok_or(
             "remote store requires a DuckDB FileSystem handle (call from a table function bind)",
         )?;
-        Ok(Arc::new(DuckDbStore::new(fs, path)))
+        Arc::new(DuckDbStore::new(fs, path))
     } else {
         if let Some(mut fs) = file_system {
             unsafe { duckdb_destroy_file_system(&mut fs) };
         }
-        Ok(Arc::new(FilesystemStore::new(path)?))
+        Arc::new(FilesystemStore::new(path)?)
+    };
+    Ok(with_consolidated_cache(path, store))
+}
+
+/// Wrap a remote store with an in-memory cache of its consolidated metadata,
+/// if any, so that the many per-array metadata opens in [`infer_dim_groups`]
+/// and [`finish_bind`](crate::read_zarr) are served from memory instead of one
+/// HTTP round trip each. A no-op for local stores (`is_remote_scheme` guards
+/// that). For remote stores, finding out costs:
+/// - **one** extra GET when `zarr.json` itself carries v3 consolidated
+///   metadata (the common case for v3 stores);
+/// - **two** when it doesn't — a `zarr.json` probe that 404s on a v2-only
+///   store, followed by `.zmetadata` — including when the store has no
+///   consolidated metadata at all, in which case both probes 404 and this
+///   is a no-op too.
+fn with_consolidated_cache(store_path: &str, store: ZarrStore) -> ZarrStore {
+    if !is_remote_scheme(store_path) {
+        return store;
     }
+    match build_consolidated_cache(&store) {
+        Ok(Some(cache)) => Arc::new(ConsolidatedCacheStore::new(store, cache)),
+        // No consolidated metadata found — normal for a store that predates
+        // it, or was never written with `consolidated=True`. Not an error.
+        Ok(None) => store,
+        // Something went wrong reading it — malformed JSON, a missing
+        // `metadata` object, but also a transient network/auth failure on
+        // the zarr.json/.zmetadata probe itself (both surface through the
+        // same `?`, and there's no cheap way to tell them apart here). Don't
+        // claim to know which; just say what happened and what we're doing
+        // about it. Printed to stderr, so it's visible when running the
+        // DuckDB CLI directly — clients that don't inherit the process's
+        // stderr (Python, JDBC, GUI shells) won't see it, only the slower
+        // per-array fallback.
+        Err(err) => {
+            eprintln!(
+                "duckdb_zarr: could not read consolidated metadata for '{store_path}' ({err}); \
+                 falling back to per-array metadata reads"
+            );
+            store
+        }
+    }
+}
+
+fn build_consolidated_cache(
+    store: &ZarrStore,
+) -> Result<Option<HashMap<StoreKey, Bytes>>, Box<dyn std::error::Error>> {
+    // Zarr v3: consolidated metadata is embedded in the root `zarr.json`, as a
+    // map of node path -> that node's full metadata document.
+    if let Some(bytes) = store.get(&StoreKey::new("zarr.json")?)? {
+        let doc: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(metadata) = doc
+            .get("consolidated_metadata")
+            .and_then(|c| c.get("metadata"))
+            .and_then(serde_json::Value::as_object)
+        {
+            let mut cache = HashMap::new();
+            // Insert the full root document (the only entry carrying the
+            // `consolidated_metadata` block itself) first. Some writers may
+            // additionally list the root group under its own path ("" or
+            // "/") in `metadata` — if so, skip it below rather than
+            // overwrite this entry with that sub-document, which lacks
+            // `consolidated_metadata` and would break any later
+            // `Group::open(store, "/")` that reads it back from the cache.
+            cache.insert(StoreKey::new("zarr.json")?, bytes.clone());
+            for (name, node_meta) in metadata {
+                let name = name.trim_start_matches('/');
+                if name.is_empty() {
+                    continue;
+                }
+                cache.insert(
+                    StoreKey::new(format!("{name}/zarr.json"))?,
+                    Bytes::from(serde_json::to_vec(node_meta)?),
+                );
+            }
+            return Ok(Some(cache));
+        }
+    }
+
+    // Zarr v2: consolidated metadata lives in a separate `.zmetadata` object —
+    // a flat map from `<path>/.zarray` / `<path>/.zattrs` / `.zgroup` keys to
+    // their file contents.
+    if let Some(bytes) = store.get(&StoreKey::new(".zmetadata")?)? {
+        let doc: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(metadata) = doc.get("metadata").and_then(serde_json::Value::as_object) {
+            let mut cache = HashMap::new();
+            cache.insert(StoreKey::new(".zmetadata")?, bytes.clone());
+            for (key, value) in metadata {
+                cache.insert(
+                    StoreKey::new(key.as_str())?,
+                    Bytes::from(serde_json::to_vec(value)?),
+                );
+            }
+            return Ok(Some(cache));
+        }
+    }
+
+    Ok(None)
 }
 
 /// List the store-relative paths of all arrays in the Zarr hierarchy.
@@ -871,4 +973,52 @@ pub fn build_column_defs(
     }
 
     Ok(cols)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use zarrs::storage::store::MemoryStore;
+    use zarrs::storage::WritableStorageTraits;
+
+    use super::*;
+
+    #[test]
+    fn v3_consolidated_cache_survives_a_self_referencing_root_entry() {
+        // Some v3 writers list the root group under its own path ("" or "/")
+        // inside `consolidated_metadata.metadata`. That sub-document doesn't
+        // itself carry `consolidated_metadata`, so it must never overwrite
+        // the full root document already cached under the "zarr.json" key.
+        let store_inner = MemoryStore::new();
+        let root_doc = serde_json::json!({
+            "zarr_format": 3,
+            "node_type": "group",
+            "consolidated_metadata": {
+                "kind": "inline",
+                "must_understand": false,
+                "metadata": {
+                    "/": {"zarr_format": 3, "node_type": "group"},
+                    "foo": {"zarr_format": 3, "node_type": "array"},
+                }
+            }
+        });
+        store_inner
+            .set(
+                &StoreKey::new("zarr.json").unwrap(),
+                Bytes::from(serde_json::to_vec(&root_doc).unwrap()),
+            )
+            .unwrap();
+        let store: ZarrStore = Arc::new(store_inner);
+
+        let cache = build_consolidated_cache(&store).unwrap().unwrap();
+
+        let cached_root = cache.get(&StoreKey::new("zarr.json").unwrap()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(cached_root).unwrap();
+        assert!(
+            parsed.get("consolidated_metadata").is_some(),
+            "root zarr.json cache entry lost its consolidated_metadata block: {parsed}"
+        );
+        assert!(cache.contains_key(&StoreKey::new("foo/zarr.json").unwrap()));
+    }
 }
