@@ -52,7 +52,6 @@ impl VTab for ReadZarrMetaVTab {
         let store_path = bind.get_parameter(0).to_string();
         let fs = unsafe { extract_file_system(bind) };
         let store = open_store(&store_path, Some(fs))?;
-        let store = crate::zarr_reader::meta::with_consolidated_cache(&store_path, store);
         let mut array_names = list_array_names(&store_path, &store)?;
         let array_path = bind
             .get_named_parameter("array_path")

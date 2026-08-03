@@ -58,43 +58,67 @@ pub fn is_remote_scheme(path: &str) -> bool {
 /// - S3/GCS/Azure → `DuckDbStore` backed by the provided `file_system` handle
 ///   (the store takes ownership and destroys it on drop)
 /// - Local path → `zarrs::FilesystemStore` (destroys the handle if provided)
+///
+/// Remote stores are additionally wrapped with an in-memory consolidated-
+/// metadata cache when one is available (see [`with_consolidated_cache`]),
+/// so callers get the fast path for free instead of having to remember to
+/// apply it themselves.
 pub fn open_store(
     path: &str,
     file_system: Option<duckdb_file_system>,
 ) -> Result<ZarrStore, Box<dyn std::error::Error>> {
     let lower = path.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
+    let store: ZarrStore = if lower.starts_with("http://") || lower.starts_with("https://") {
         if let Some(mut fs) = file_system {
             unsafe { duckdb_destroy_file_system(&mut fs) };
         }
-        Ok(Arc::new(zarrs_http::HTTPStore::new(path)?))
+        Arc::new(zarrs_http::HTTPStore::new(path)?)
     } else if lower.starts_with("s3://") || lower.starts_with("gs://") || lower.starts_with("az://")
     {
         let fs = file_system.ok_or(
             "remote store requires a DuckDB FileSystem handle (call from a table function bind)",
         )?;
-        Ok(Arc::new(DuckDbStore::new(fs, path)))
+        Arc::new(DuckDbStore::new(fs, path))
     } else {
         if let Some(mut fs) = file_system {
             unsafe { duckdb_destroy_file_system(&mut fs) };
         }
-        Ok(Arc::new(FilesystemStore::new(path)?))
-    }
+        Arc::new(FilesystemStore::new(path)?)
+    };
+    Ok(with_consolidated_cache(path, store))
 }
 
 /// Wrap a remote store with an in-memory cache of its consolidated metadata,
 /// if any, so that the many per-array metadata opens in [`infer_dim_groups`]
 /// and [`finish_bind`](crate::read_zarr) are served from memory instead of one
-/// HTTP round trip each. A no-op for local stores or remote stores without
-/// consolidated metadata — in the worst case this costs one extra GET
-/// (`.zmetadata` or `zarr.json`) to find that out.
-pub fn with_consolidated_cache(store_path: &str, store: ZarrStore) -> ZarrStore {
+/// HTTP round trip each. A no-op for local stores (`is_remote_scheme` guards
+/// that). For remote stores, finding out costs:
+/// - **one** extra GET when `zarr.json` itself carries v3 consolidated
+///   metadata (the common case for v3 stores);
+/// - **two** when it doesn't — a `zarr.json` probe that 404s on a v2-only
+///   store, followed by `.zmetadata` — including when the store has no
+///   consolidated metadata at all, in which case both probes 404 and this
+///   is a no-op too.
+fn with_consolidated_cache(store_path: &str, store: ZarrStore) -> ZarrStore {
     if !is_remote_scheme(store_path) {
         return store;
     }
     match build_consolidated_cache(&store) {
         Ok(Some(cache)) if !cache.is_empty() => Arc::new(ConsolidatedCacheStore::new(store, cache)),
-        _ => store,
+        // No consolidated metadata found — normal for a store that predates
+        // it, or was never written with `consolidated=True`. Not an error.
+        Ok(_) => store,
+        // Consolidated metadata was present but malformed (bad JSON, missing
+        // `metadata` object, ...). Surface it: a reader who set up
+        // consolidation and still hits the O(n_arrays) slow path deserves to
+        // know why, rather than silently falling back with no explanation.
+        Err(err) => {
+            eprintln!(
+                "duckdb_zarr: '{store_path}' has malformed consolidated metadata ({err}); \
+                 falling back to per-array metadata reads"
+            );
+            store
+        }
     }
 }
 
