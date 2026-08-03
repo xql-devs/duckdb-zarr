@@ -12,10 +12,9 @@ use super::meta::ZarrStore;
 /// `Array::open` issues up to three GETs per array (a v3 `zarr.json` probe,
 /// then `.zarray`, then `.zattrs`), and dim-group inference in `meta.rs` opens
 /// every array in the store several times over while classifying coords,
-/// bounds vars, and dim groups. For a store with O(100) arrays — common for
-/// CF-convention ocean/atmosphere datasets that split each 3-D variable into
-/// one 2-D array per depth level — that is thousands of HTTP round trips
-/// before a single byte of chunk data is read. Since consolidated metadata
+/// bounds vars, and dim groups. For a store with O(100) arrays — not unusual
+/// for real-world multi-variable datasets — that is thousands of HTTP round
+/// trips before a single byte of chunk data is read. Since consolidated metadata
 /// (`.zmetadata` for v2, `consolidated_metadata` in `zarr.json` for v3)
 /// already contains every array's metadata document, serving those lookups
 /// from memory turns O(arrays) round trips into O(1).
