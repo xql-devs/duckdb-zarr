@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-04
+
 ### Changed
 - Target DuckDB **v1.5.5** (crate `=1.10505.0`) across the three pinned sites (`Makefile` `TARGET_DUCKDB_VERSION`, `MainDistributionPipeline.yml` `duckdb_version`, `Cargo.toml`) plus `Cargo.lock`. With `USE_UNSTABLE_C_API=1` a binary built for v1.5.4 is rejected by v1.5.5's loader (exact-version `C_STRUCT_UNSTABLE` ABI), which is why the community extension went unavailable after DuckDB 1.5.5. Compiles against 1.10505.0 with no source changes.
 

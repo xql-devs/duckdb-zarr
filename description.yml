@@ -1,7 +1,7 @@
 extension:
   name: zarr
   description: Query Zarr array stores (v2 and v3) with SQL — read xarray-convention datasets as tables
-  version: 0.1.1
+  version: 0.1.3
   language: Rust
   build: cargo
   requires_toolchains: "rust;python3"
