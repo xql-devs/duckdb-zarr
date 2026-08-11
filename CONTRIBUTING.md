@@ -75,8 +75,10 @@ Release checklist:
 
 1. Confirm `Main Extension Distribution Pipeline` and `Rust quality` are green on
    the commit to publish.
-2. Update `CHANGELOG.md`, `Cargo.toml` version, `pyproject.toml` version, and
-   `description.yml` version together.
+2. Update `CHANGELOG.md` (still manual). Do **not** bump `Cargo.toml`,
+   `pyproject.toml`, or `description.yml` — they keep a development-placeholder
+   version that is synced from the release tag automatically; see
+   [docs/versioning.md](docs/versioning.md).
 3. Create and publish a GitHub Release with a tag matching the project version,
    such as `v0.1.0`.
 4. Download the descriptor artifact from the `Community Extension Release`

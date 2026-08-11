@@ -397,3 +397,14 @@ FROM (SELECT air FROM read_zarr('test/fixtures/xarray_tutorial/air_temperature.z
 ----
 1088175738.000000
 
+# ── extension version ───────────────────────────────────────────────────────
+# extension_version is stamped at build time from `git tag --points-at HEAD`
+# (falling back to the short commit hash) by extension-ci-tools' configure
+# step — see docs/versioning.md. Just assert it's populated; the exact value
+# is build-environment-dependent.
+
+query I
+SELECT length(extension_version) > 0 FROM duckdb_extensions() WHERE extension_name = 'zarr';
+----
+true
+
