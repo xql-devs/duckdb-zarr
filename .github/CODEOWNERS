@@ -1,0 +1,11 @@
+# Code owners for duckdb-zarr.
+#
+# GitHub requests a review from the listed owners on every pull request that
+# touches a matching path. This only blocks merging if branch protection for
+# the target branch also has "Require review from Code Owners" enabled.
+#
+# See https://docs.github.com/articles/about-code-owners
+
+# Default owners for everything in the repo, unless a later, more specific
+# pattern overrides them.
+* @alxmrs @d33bs
