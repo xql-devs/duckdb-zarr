@@ -94,7 +94,8 @@ Release tags use a `v` prefix; the package version omits it:
 At release time,
 [`scripts/sync_release_version.py`](../scripts/sync_release_version.py)
 rewrites `Cargo.toml`, `pyproject.toml`, `description.yml`, and the `zarr`
-package entry in `Cargo.lock` to match the tag:
+package entry in `Cargo.lock` to match the tag, inside the release workflow's
+CI checkout — **no commit is made to `main` (or any branch)**:
 
 ```console
 $ python3 scripts/sync_release_version.py v0.1.4
@@ -112,6 +113,13 @@ releases — publishing a release no longer requires a manual `Cargo.toml` /
 `pyproject.toml` / `description.yml` bump beforehand, only a `CHANGELOG.md`
 entry (still maintained by hand; see
 [`CHANGELOG.md`](../CHANGELOG.md)) and the tag itself.
+
+Committing the synced version back to `main` was considered and rejected: it
+would require the release workflow to push a commit (or open a PR) after
+every tag, adding a second source of truth that could drift from the tag it
+was derived from, plus bot-authored commits/PRs to review on every release.
+Leaving the sync ephemeral keeps the git tag as the single source of truth
+and matches the pattern already proven in `arrow-lint`/`zarr-lint`.
 
 If a `workflow_dispatch` run targets a raw commit hash instead of a tag (the
 `description.yml` `repo.ref` "publish an older/manual ref" path), there is no
