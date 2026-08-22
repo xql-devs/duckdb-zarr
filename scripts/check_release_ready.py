@@ -51,6 +51,12 @@ def main() -> int:
     makefile = read("Makefile")
     workflow = read(".github/workflows/MainDistributionPipeline.yml")
     cargo = read("Cargo.toml")
+    pyproject = read("pyproject.toml")
+    # The repo's own description.yml, independent of --description-path: the
+    # project-version-agreement check below is about the checked-in
+    # development-placeholder trio, not whichever descriptor is being
+    # validated (which may be a tag-synced render under build/).
+    root_description = read("description.yml")
     description = read(args.description_path)
 
     try:
@@ -83,6 +89,36 @@ def main() -> int:
                 "DuckDB crate pin drift: "
                 f"Cargo.toml has {cargo_duckdb}, expected {expected_crate} for {make_duckdb}"
             )
+
+    # Cargo.toml / pyproject.toml / description.yml carry a development-
+    # placeholder version (see docs/versioning.md) that is only ever rewritten
+    # by scripts/sync_release_version.py at release-build time, never
+    # committed. This does not check it against any git tag — it only
+    # guards that the three checked-in placeholders can't silently drift
+    # apart from each other between releases.
+    try:
+        project_versions = {
+            "Cargo.toml": first_match(
+                r'^version\s*=\s*"([^"]+)"', cargo, "Cargo.toml package version"
+            ),
+            "pyproject.toml": first_match(
+                r'^version\s*=\s*"([^"]+)"', pyproject, "pyproject.toml project version"
+            ),
+            "description.yml": first_match(
+                r"^\s*version:\s*([^\s]+)\s*$",
+                root_description,
+                "description.yml extension version",
+            ),
+        }
+    except ValueError as exc:
+        failures.append(str(exc))
+    else:
+        distinct_versions = set(project_versions.values())
+        if len(distinct_versions) != 1:
+            details = ", ".join(
+                f"{path}={version}" for path, version in project_versions.items()
+            )
+            failures.append(f"project versions differ: {details}")
 
     descriptor_checks = {
         "extension.name": r"^\s*name:\s*zarr\s*$",

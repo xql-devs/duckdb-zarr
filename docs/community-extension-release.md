@@ -22,6 +22,10 @@ in a Rust C API extension:
 - `Cargo.toml` exact `duckdb` crate pin
 - `description.yml` `language`, `build`, `requires_toolchains`, and excluded
   platforms
+- `Cargo.toml` / `pyproject.toml` / `description.yml` development-placeholder
+  versions agreeing with each other (see
+  [docs/versioning.md](versioning.md) — this does not check them against any
+  git tag; that sync happens automatically at release time)
 
 For the final community PR, also run:
 
@@ -104,8 +108,11 @@ Re-enable platforms only after the CI build and SQLLogic tests pass for them.
 
 1. Ensure `main` is green for `Main Extension Distribution Pipeline` and
    `Rust quality`.
-2. Update `CHANGELOG.md`, `Cargo.toml` version, `pyproject.toml` version, and
-   the `description.yml` version.
+2. Update `CHANGELOG.md` (still manual). Do **not** bump `Cargo.toml`,
+   `pyproject.toml`, or `description.yml` — they keep a development-placeholder
+   version that `scripts/sync_release_version.py` syncs from the release tag
+   automatically inside `community-release.yml`; see
+   [docs/versioning.md](versioning.md).
 3. Create and publish a GitHub Release with a tag matching the project version,
    such as `v0.1.0`.
 4. Download the validated descriptor artifact from the `Community Extension

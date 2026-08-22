@@ -28,10 +28,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ env.RELEASE_REF }}
           submodules: true
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+
+      - name: Sync version from release tag
+        # Cargo.toml/pyproject.toml/description.yml carry a development-
+        # placeholder version (see docs/versioning.md); the tag is the real
+        # source of truth. A workflow_dispatch ref may instead be a raw commit
+        # hash (no tag to sync from), in which case the checked-in placeholder
+        # is rendered as-is.
+        run: |
+          if [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            uv run scripts/sync_release_version.py "$RELEASE_REF"
+          else
+            echo "RELEASE_REF '$RELEASE_REF' is not a vX.Y.Z tag; skipping version sync."
+          fi
 
       - name: Render descriptor for release ref
         run: |
