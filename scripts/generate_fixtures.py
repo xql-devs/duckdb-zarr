@@ -333,6 +333,33 @@ def main() -> None:
                       coords={"lat": lat, "lon": lon})
     write_zarr(xr.Dataset({"values": da}), "unindexed_dim")
 
+    # ── string_var (synthetic, anndata-style) ────────────────────────────────
+    # Tests: `string` dtype (Zarr v3, vlen-utf8-codec-backed) as a plain data
+    # variable — the shape anndata writes `obs`/`var` columns like
+    # `gene_symbol` in. One row is the empty string to exercise the dtype's
+    # default fill_value. See https://github.com/xqlsystems/duckdb-zarr/issues/40.
+    print("string_var (synthetic)...")
+    n_var = 5
+    var_idx = np.arange(n_var, dtype="int64")
+    gene_symbol = np.array(["Actb", "Gapdh", "", "Myc", "Tp53"], dtype=object)
+    gene_symbol_da = xr.DataArray(gene_symbol, dims=["var"], coords={"var": var_idx})
+    write_zarr(xr.Dataset({"gene_symbol": gene_symbol_da}), "string_var")
+
+    # ── string_var_v2 (synthetic) ────────────────────────────────────────────
+    # Same data as string_var but written as Zarr v2: dtype `|O` with a
+    # `vlen-utf8` filter — the exact on-disk encoding anndata (zarr-python)
+    # uses for string columns in a pre-v3 `.zarr` store.
+    print("string_var_v2 (synthetic)...")
+    dest = FIXTURES / "string_var_v2.zarr"
+    if (dest / "gene_symbol" / ".zarray").exists():
+        print(f"  (cached) {dest}")
+    else:
+        if dest.exists():
+            _rmtree(dest)
+        xr.Dataset({"gene_symbol": gene_symbol_da}).to_zarr(
+            dest, zarr_format=2, consolidated=False)
+        print(f"  wrote {dest}")
+
     # ── scalar_coord (synthetic) ─────────────────────────────────────────────
     # Tests: scalar (0-dim) coordinate variables (e.g. ROMS hc, Vtransform).
     # These should be excluded from the row schema and surfaced in metadata.

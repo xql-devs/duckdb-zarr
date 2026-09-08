@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **`string` dtype support** (Zarr v3 `string` / Zarr v2 `|O` + `vlen-utf8` filter), mapped to `VARCHAR`. This is the encoding anndata (and zarr-python generally) use for `obs`/`var` text columns such as `gene_symbol`, which previously failed to read with `unsupported dtype 'string'` (#40). Both a plain data-variable column and a string dim-coord are supported, over `read_zarr` and HTTP/S3/GCS/Azure stores alike. See `docs/design.md` §Type mapping > Variable-length strings for the implementation approach.
+
 ## [0.1.3] - 2026-08-04
 
 ### Changed

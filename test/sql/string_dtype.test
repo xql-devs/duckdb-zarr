@@ -1,0 +1,67 @@
+# name: test/sql/string_dtype.test
+# description: `string` dtype (Zarr v3 vlen-utf8 / Zarr v2 `|O`+vlen-utf8) as VARCHAR
+# group: [zarr]
+#
+# Covers https://github.com/xqlsystems/duckdb-zarr/issues/40 — anndata `obs`/`var`
+# columns (e.g. `gene_symbol`) are written as this dtype, and previously failed
+# with "unsupported dtype 'string'".
+
+require zarr
+
+# ── string_var (Zarr v3) ──────────────────────────────────────────────────────
+# One data variable `gene_symbol` (dtype `string`) over dim `var`; row 2 is the
+# empty string (the dtype's default fill_value).
+
+query I
+SELECT COUNT(*) FROM read_zarr('test/fixtures/xarray_tutorial/string_var.zarr');
+----
+5
+
+query II
+SELECT var, gene_symbol FROM read_zarr('test/fixtures/xarray_tutorial/string_var.zarr') ORDER BY var;
+----
+0	Actb
+1	Gapdh
+2	(empty)
+3	Myc
+4	Tp53
+
+# Reported as VARCHAR, so ordinary string predicates and functions apply.
+query I
+SELECT COUNT(*) FROM read_zarr('test/fixtures/xarray_tutorial/string_var.zarr') WHERE gene_symbol = 'Myc';
+----
+1
+
+query I
+SELECT COUNT(*) FROM read_zarr('test/fixtures/xarray_tutorial/string_var.zarr') WHERE gene_symbol = '';
+----
+1
+
+query I
+SELECT UPPER(gene_symbol) FROM read_zarr('test/fixtures/xarray_tutorial/string_var.zarr') WHERE var = 0;
+----
+ACTB
+
+# read_zarr_metadata reports the raw on-disk dtype string. zarrs prints both
+# the v3 and v2 names when they differ ("string" vs. `|O`).
+query I
+SELECT dtype FROM read_zarr_metadata('test/fixtures/xarray_tutorial/string_var.zarr') WHERE name = 'gene_symbol';
+----
+string / |O
+
+# ── string_var_v2 (Zarr v2, `|O` + vlen-utf8 filter) ──────────────────────────
+# Same values, but written in the legacy v2 encoding anndata/zarr-python use.
+
+query II
+SELECT var, gene_symbol FROM read_zarr('test/fixtures/xarray_tutorial/string_var_v2.zarr') ORDER BY var;
+----
+0	Actb
+1	Gapdh
+2	(empty)
+3	Myc
+4	Tp53
+
+query I
+SELECT COUNT(*) FROM read_zarr('test/fixtures/xarray_tutorial/string_var_v2.zarr') WHERE gene_symbol = 'Tp53';
+----
+1
