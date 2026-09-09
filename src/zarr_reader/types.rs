@@ -14,10 +14,6 @@ pub enum ZarrDtype {
     UInt64,
     Float32,
     Float64,
-    /// Variable-length UTF-8 string. Zarr v3 `string`, or Zarr v2 `|O` with a
-    /// `vlen-utf8` filter (the encoding anndata/zarr-python use for e.g.
-    /// `obs`/`var` columns like `gene_symbol`). Has no fixed [`Self::byte_size`];
-    /// callers must branch on this variant before reaching for byte-offset math.
     String,
 }
 
@@ -61,10 +57,7 @@ impl ZarrDtype {
         )
     }
 
-    /// # Panics
-    /// Panics for [`Self::String`], which is variable-length and has no fixed
-    /// byte size. Callers must branch on the variant (or on the decoded
-    /// [`ColumnValues`]) before calling this.
+    /// Panics for [`Self::String`], which is variable-length and has no fixed byte size.
     pub fn byte_size(&self) -> usize {
         match self {
             Self::Bool | Self::Int8 | Self::UInt8 => 1,
@@ -138,12 +131,9 @@ pub struct DimGroup {
     pub coord_var_names: Vec<String>,
 }
 
-/// Decoded element values for one array segment (a coordinate array, or one
-/// chunk of a data variable).
-///
-/// Fixed-width dtypes decode to a flat native-endian byte buffer, indexed by
-/// `dtype.byte_size()`-wide offsets. [`ZarrDtype::String`] has no fixed
-/// width, so it decodes to one `String` per element instead.
+/// Decoded element values for one array segment.
+// For fixed-size dtypes, this is a single contiguous byte buffer.
+// For variable-length strings, this is a Vec<String>.
 #[derive(Debug, Clone)]
 pub enum ColumnValues {
     /// Row-major native-endian bytes, length = `n * dtype.byte_size()`.

@@ -40,11 +40,6 @@ pub fn fill_scalar_element_pub(
 }
 
 /// Copy one decoded string element into a DuckDB VARCHAR vector slot.
-///
-/// Unlike fixed-width dtypes, strings have no CF `_FillValue`/`missing_value`
-/// sentinel convention, so no NULL masking is applied here — every retrieved
-/// element (including zarrs' fill-value substitution for implicit chunks) is
-/// written as-is.
 pub fn fill_string_element_pub(
     vector: &mut FlatVector<'_>,
     strings: &[String],
