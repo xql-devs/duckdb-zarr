@@ -299,13 +299,25 @@ The base dtype mapping is mechanical:
 | `bool`                             | `BOOLEAN`                                |                                             |
 | `M8[ns]` / `M8[us]`                | `TIMESTAMP_NS` / `TIMESTAMP`             | native NumPy datetimes; mapped directly     |
 | CF-encoded time (`f4/f8/i4/i8`)    | `FLOAT`/`DOUBLE`/`INTEGER`/`BIGINT`      | raw on-disk dtype; CF decoding deferred     |
-| `S<n>` (fixed bytes)               | `BLOB`                                   |                                             |
-| `U<n>` (UTF-32)                    | `VARCHAR`                                | decoded                                     |
-| structured / object                | unsupported v1                           | error at bind                               |
+| `S<n>` (fixed bytes)               | `BLOB`                                   | not yet implemented; error at bind          |
+| `U<n>` (UTF-32)                    | `VARCHAR`                                | not yet implemented; error at bind          |
+| `string` (v3) / `|O`+vlen-utf8 (v2) | `VARCHAR`                                | variable-length; see below                  |
+| structured / other object          | unsupported                              | error at bind                               |
 
 CF-encoded time appears in real stores as `int32`, `int64`, `float32`, or `float64` depending on the source NetCDF — RASM uses `f8` + `noleap`, `air_temperature` uses `f4` + `gregorian`, ERA5-style stores use `i8`. We surface the raw on-disk dtype; decoding is deferred (see Phased plan / Later and decision 3). The `units` and `calendar` attrs ride along into `read_zarr_metadata.attrs` so users know what they're decoding against.
 
-### Packed integer decoding (CF §8.1)
+### Variable-length strings (`string` / vlen-utf8)
+
+Unlike every other supported dtype, `ZarrDtype::String` has no fixed `byte_size()` — each element is its own UTF-8 byte run, not a fixed-width slot in a flat buffer. This is the on-disk encoding anndata (and zarr-python generally) use for `obs`/`var` text columns such as `gene_symbol` (issue #40), as either the Zarr v3 `string` dtype or the Zarr v2 `dtype: "|O"` + `filters: [{"id": "vlen-utf8"}]` pair — `zarrs` normalizes both to the same `string` data type at open time, so the reader doesn't need to special-case v2.
+
+Because the rest of the reader is built around `ColumnEncoding`/byte-offset math (`retrieve_chunk::<ArrayBytes<'static>>().into_fixed()`, indexed by `dtype.byte_size()`), string columns take a parallel path everywhere a byte buffer would otherwise be read or decoded:
+
+- Decoding uses `retrieve_chunk::<Vec<String>>` / `retrieve_array_subset::<Vec<String>>` (zarrs' `ElementOwned` API) instead of `ArrayBytes::into_fixed()`, yielding one `String` per element directly.
+- `ColumnValues` (an enum of `Fixed(Vec<u8>)` or `Strings(Vec<String>)`) replaces the bare `Vec<u8>` used for a coordinate array's pre-loaded values and a data variable's per-chunk decode buffer, so both paths carry either representation.
+- zarrs pads a boundary chunk's *element count* to the full nominal `chunk_shape` for every dtype uniformly (fill-value elements past the array's logical bound), so the existing `zarrs_flat` physical-offset math indexes correctly into a `Vec<String>` with no changes — verified against a non-chunk-aligned 2-D string fixture during implementation.
+- No NULL masking applies: CF's `_FillValue`/`missing_value` sentinel convention is numeric-only, so every decoded string (including zarrs' own empty-string fill-value substitution) is written through as-is.
+
+`ColumnEncoding::PackedInt` never applies to strings (its trigger condition requires an integer on-disk dtype), so packed-decoding and string decoding never intersect.
 
 A data variable whose **on-disk dtype is an integer type** (i8/u8/i16/u16/i32/u32/i64/u64) *and* that carries `scale_factor` and/or `add_offset` attrs is *packed*: the on-disk integer is a quantization of a real-valued measurement. **The integer dtype is required.** A float array that incidentally carries `scale_factor` as legacy metadata (measurement precision, grid resolution) must NOT be decoded — applying `scale * value + offset` to already-decoded floats would corrupt them by a factor of ~100×. The trigger condition is `integer_dtype AND (has scale_factor OR has add_offset)`, not the presence of attrs alone.
 
