@@ -27,8 +27,8 @@ SELECT lat, lon, AVG(temperature)
 FROM 'test/fixtures/xarray_tutorial/float_baseline.zarr'
 GROUP BY lat, lon;
 
--- CF-encoded time coordinates decode to TIMESTAMP, so DuckDB's date machinery
--- works on them directly. Pass decode_times=false for the raw on-disk offsets.
+-- CF time coordinates arrive as TIMESTAMP, so date predicates and date
+-- functions need no ceremony (decode_times=false gives the raw offsets).
 SELECT date_trunc('month', time) AS month, AVG(air) AS mean_air
 FROM 'test/fixtures/xarray_tutorial/air_temperature.zarr'
 WHERE time >= TIMESTAMP '2014-01-01'

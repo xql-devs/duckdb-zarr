@@ -7,10 +7,7 @@
 //!
 //! Only the real-world calendars are decoded here. `noleap`, `360_day`, `julian`
 //! and friends have arithmetic that does not map onto a wall clock at all, so
-//! those columns stay raw (tracked as issue #45). That restriction is what lets
-//! this be ~200 lines of civil-date arithmetic instead of a cftime dependency —
-//! the one Rust implementation, `cftime-rs`, is AGPL-3.0 and cannot ship in a
-//! community extension (issues #25/#26).
+//! those columns stay raw.
 
 use serde_json::{Map, Value};
 
@@ -31,6 +28,13 @@ pub struct CfTimeEncoding {
     pub step_den: i64,
     /// Reference instant, microseconds since 1970-01-01T00:00:00Z.
     pub epoch_us: i64,
+    /// Earliest instant this encoding may emit. For the mixed `standard`/
+    /// `gregorian` calendar that is the 1582-10-15 Gregorian reform: before it
+    /// those files mean Julian dates, which proleptic arithmetic renders ~10
+    /// days off. Checking only the *reference* date would miss an axis whose
+    /// reference is post-reform but whose negative offsets reach back past it.
+    /// `i64::MIN` for `proleptic_gregorian`, which is proleptic by definition.
+    pub floor_us: i64,
 }
 
 impl CfTimeEncoding {
@@ -68,6 +72,12 @@ impl CfTimeEncoding {
         if total <= i64::MIN as i128 || total >= i64::MAX as i128 {
             return None;
         }
+        // A value the declared calendar renders differently is NULL, not a date
+        // that is silently ~10 days wrong. `decode_times := false` recovers the
+        // raw offsets for anyone who actually has pre-reform data.
+        if total < self.floor_us as i128 {
+            return None;
+        }
         Some(total as i64)
     }
 }
@@ -96,24 +106,28 @@ pub fn parse(attrs: &Map<String, Value>) -> Option<CfTimeEncoding> {
         .and_then(Value::as_str)
         .unwrap_or("standard")
         .to_ascii_lowercase();
-    match calendar.as_str() {
-        "proleptic_gregorian" => {}
+    let floor_us = match calendar.as_str() {
+        "proleptic_gregorian" => i64::MIN,
         // The mixed Julian/Gregorian calendar only agrees with the proleptic
-        // Gregorian one from the 1582-10-15 reform onward. Earlier reference
-        // dates would be off by days, so leave those columns raw.
+        // Gregorian one from the 1582-10-15 reform onward. A pre-reform
+        // reference means the whole axis is Julian, so leave the column raw;
+        // a post-reform reference still needs a per-value floor, since negative
+        // offsets can reach back past the reform (see `floor_us`).
         "standard" | "gregorian" => {
             if ymd < (1582, 10, 15) {
                 return None;
             }
+            days_from_civil(1582, 10, 15) * US_PER_DAY
         }
         // noleap / 365_day / all_leap / 366_day / 360_day / julian / none.
         _ => return None,
-    }
+    };
 
     Some(CfTimeEncoding {
         step_num,
         step_den,
         epoch_us,
+        floor_us,
     })
 }
 
@@ -250,7 +264,7 @@ fn parse_clock(s: &str) -> Option<i64> {
     Some(hours * 3_600_000_000 + minutes * 60_000_000 + (seconds * 1_000_000.0).round() as i64)
 }
 
-/// Parse a UTC offset (`Z`, `UTC`, `+05:30`, `-0800`, `+05`) into microseconds.
+/// Parse a UTC offset (`Z`, `UTC`, `+05:30`, `-0800`, `+05`, `0:00`) into microseconds.
 fn parse_zone(s: &str) -> Option<i64> {
     let upper = s.to_ascii_uppercase();
     if matches!(upper.as_str(), "Z" | "UTC" | "GMT" | "UT") {
@@ -258,7 +272,11 @@ fn parse_zone(s: &str) -> Option<i64> {
     }
     let (sign, body) = match upper.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
-        None => (1i64, upper.strip_prefix('+')?),
+        // UDUNITS makes the `+` optional, and its own canonical output omits it:
+        // `"hours since 1800-01-01 00:00:0.0 0:00"` is how NOAA/NCEP-derived
+        // stores spell a zero offset. A bare token only reaches here once the
+        // clock has already been claimed, so this can't swallow a time-of-day.
+        None => (1i64, upper.strip_prefix('+').unwrap_or(upper.as_str())),
     };
     let (hours, minutes): (i64, i64) = match body.split_once(':') {
         Some((h, m)) => (h.parse().ok()?, m.parse().ok()?),
@@ -380,6 +398,49 @@ mod tests {
             epoch("hours since 1969-12-31 23:00:00"),
             Some(-3_600_000_000)
         );
+    }
+
+    #[test]
+    fn sign_less_udunits_zone_offset_is_accepted() {
+        // UDUNITS' canonical output omits the '+', and NOAA/NCEP-derived stores
+        // spell a zero offset exactly this way. Rejecting it silently left the
+        // whole axis raw, with no diagnostic.
+        let epoch = |units: &str| parse(&attrs(&[("units", units)])).map(|c| c.epoch_us);
+        let plain = epoch("hours since 1800-01-01 00:00:0.0").unwrap();
+        assert_eq!(epoch("hours since 1800-01-01 00:00:0.0 0:00"), Some(plain));
+        assert_eq!(
+            epoch("seconds since 1970-01-01 05:30:00 5:30"),
+            Some(0),
+            "a sign-less zone means +, so the offset is still subtracted"
+        );
+        // A named local zone stays unparseable — it is not a fixed UTC offset.
+        assert_eq!(epoch("seconds since 1970-01-01 00:00:00 EST"), None);
+    }
+
+    #[test]
+    fn standard_calendar_floors_at_the_gregorian_reform() {
+        // Post-reform reference, but negative offsets reach back past 1582-10-15,
+        // where "standard" means Julian and proleptic arithmetic is ~10 days off.
+        let cf = parse(&attrs(&[
+            ("units", "days since 1900-01-01"),
+            ("calendar", "standard"),
+        ]))
+        .unwrap();
+        let reform = days_from_civil(1582, 10, 15) - days_from_civil(1900, 1, 1);
+        assert_eq!(
+            cf.decode_int(reform),
+            Some(days_from_civil(1582, 10, 15) * US_PER_DAY),
+            "the reform date itself is the first decodable instant"
+        );
+        assert_eq!(cf.decode_int(reform - 1), None);
+        assert_eq!(cf.decode_float(reform as f64 - 0.5), None);
+        // proleptic_gregorian declares proleptic arithmetic, so it has no floor.
+        let proleptic = parse(&attrs(&[
+            ("units", "days since 1900-01-01"),
+            ("calendar", "proleptic_gregorian"),
+        ]))
+        .unwrap();
+        assert!(proleptic.decode_int(reform - 1).is_some());
     }
 
     #[test]
