@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **CF time decoding**: a coordinate carrying `units = "<step> since <reference>"` is now surfaced as DuckDB `TIMESTAMP` instead of the raw offset it is physically stored as, so `WHERE time >= TIMESTAMP '2024-01-01'`, `date_trunc`, and the rest of DuckDB's date machinery work on Zarr time axes directly. Previously ARCO-ERA5's `time` came back as a `BIGINT` count of hours and every time predicate had to be hand-written against the array's `units` attr. Decoding covers the calendars that match a wall clock — `proleptic_gregorian`, and `standard`/`gregorian` with a reference on or after the 1582-10-15 Gregorian reform (an absent `calendar` means `standard`, per CF §4.4.1) — plus the UDUNITS step names from `weeks` down to `nanoseconds`, held as an exact rational so sub-microsecond units don't round-trip through a float. The artificial calendars (`noleap`, `365_day`, `all_leap`, `366_day`, `360_day`, `julian`) have years with no wall-clock equivalent and are deliberately left raw rather than given a plausible-looking wrong date (#45). This needs no new dependency: it is civil-date arithmetic in `src/zarr_reader/cftime.rs`, which sidesteps the AGPL-3.0 `cftime-rs` blocker (#25/#26) that had this deferred in `docs/design.md` decision 3.
+- **`decode_times=` named parameter** on `read_zarr`: `read_zarr(store, decode_times := false)` restores the raw on-disk time offsets, mirroring `xarray.open_zarr(decode_times=False)`.
+
+### Fixed
+- Coordinate columns now honour their bind-time encoding when values are written. A coord's `ColumnEncoding` was resolved at bind (and drove its advertised DuckDB type) but the scan wrote every coord through the plain-scalar path, so a packed coordinate — integer on-disk with `scale_factor`/`add_offset` — was advertised as `DOUBLE` and then filled with its raw integer bits. Coords and data variables now share one encoding-aware filler.
+
 ## [0.1.3] - 2026-08-04
 
 ### Changed

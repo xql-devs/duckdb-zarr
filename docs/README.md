@@ -51,6 +51,19 @@ SELECT * FROM read_zarr('test/fixtures/xarray_tutorial/float_baseline.zarr');
 SELECT time, lat, lon, temperature
 FROM read_zarr('test/fixtures/xarray_tutorial/float_baseline.zarr')
 WHERE lat > 0 AND lon < 180;
+
+-- A CF-encoded time coordinate ("<step> since <reference>" in its units attr)
+-- becomes a TIMESTAMP, so date predicates and date functions just work.
+SELECT date_trunc('month', time) AS month, AVG(air) AS mean_air
+FROM read_zarr('test/fixtures/xarray_tutorial/air_temperature.zarr')
+WHERE time BETWEEN TIMESTAMP '2014-06-01' AND TIMESTAMP '2014-09-01'
+GROUP BY month ORDER BY month;
+
+-- decode_times=false gives back the raw on-disk offsets instead.
+-- Columns on the artificial CF calendars (noleap, 360_day, julian) are always
+-- left raw, since those years have no wall-clock equivalent.
+SELECT time FROM read_zarr('test/fixtures/xarray_tutorial/air_temperature.zarr',
+                           decode_times=false) LIMIT 1;
 ```
 
 For a small bioimage walkthrough, see [Querying OME-Zarr](ome-zarr.md).
